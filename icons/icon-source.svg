@@ -1,0 +1,22 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="roundedSquare">
+      <rect x="0" y="0" width="512" height="512" rx="96" ry="96"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#roundedSquare)">
+    <rect x="0" y="0" width="512" height="512" fill="#8B2E2E"/>
+  </g>
+  <g transform="translate(256,246) scale(3.6) translate(-50,-45)">
+    <path d="M50 90
+             C 20 65, 0 45, 0 25
+             C 0 5, 20 -5, 35 5
+             C 42 10, 47 15, 50 20
+             C 53 15, 58 10, 65 5
+             C 80 -5, 100 5, 100 25
+             C 100 45, 80 65, 50 90 Z"
+          fill="#F6F5F0"/>
+  </g>
+  <polyline points="146,268 200,268 222,210 248,320 274,238 296,268 366,268"
+            fill="none" stroke="#C97A2B" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

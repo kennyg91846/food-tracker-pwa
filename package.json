@@ -1,0 +1,20 @@
+{
+  "name": "food-tracker-pwa",
+  "version": "1.0.0",
+  "description": "A no-backend PWA that logs foods, tracks macros, and shows how today's intake compares to AHA/DASH-based heart-health targets. Data lives entirely in your browser (IndexedDB via Dexie) — nothing is sent anywhere except the food searches themselves, to USDA and Open Food Facts.",
+  "main": "api.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "serve . -l 8080",
+    "start": "serve . -l 8080"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "serve": "^14.2.6"
+  },
+  "dependencies": {
+    "dexie": "^4.4.4"
+  }
+}

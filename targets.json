@@ -1,0 +1,53 @@
+{
+  "_note": "Default targets for a general healthy adult on a ~2000 kcal/day diet. These are educational reference points from public AHA/DASH guidance, not medical advice. Editable in Settings.",
+  "calories": {
+    "target": 2000,
+    "unit": "kcal",
+    "source": "Common reference intake (FDA/DASH 2000-kcal pattern)"
+  },
+  "sodium": {
+    "target": 2300,
+    "idealTarget": 1500,
+    "unit": "mg",
+    "direction": "max",
+    "source": "AHA: 2,300mg/day general upper limit; 1,500mg/day 'ideal' target for most adults, especially those with high blood pressure. Defaults to the general limit so healthy users aren't shown as constantly over."
+  },
+  "saturatedFat": {
+    "percentOfCalories": 6,
+    "unit": "g",
+    "direction": "max",
+    "source": "AHA: keep saturated fat to about 6% of total daily calories"
+  },
+  "addedSugar": {
+    "target": 36,
+    "targetAlt": 25,
+    "unit": "g",
+    "direction": "max",
+    "source": "AHA: no more than 36g/day (9 tsp) for men, 25g/day (6 tsp) for women. Defaults to the higher figure; adjust in Settings."
+  },
+  "fiber": {
+    "target": 28,
+    "unit": "g",
+    "direction": "min",
+    "source": "DASH 2000-kcal pattern / Dietary Guidelines for Americans"
+  },
+  "potassium": {
+    "target": 4700,
+    "unit": "mg",
+    "direction": "min",
+    "source": "DASH diet daily target"
+  },
+  "totalFat": {
+    "percentOfCaloriesMin": 20,
+    "percentOfCaloriesMax": 35,
+    "unit": "g",
+    "direction": "range",
+    "source": "DASH / Dietary Guidelines for Americans"
+  },
+  "protein": {
+    "target": 50,
+    "unit": "g",
+    "direction": "min",
+    "source": "General RDA reference (0.8g/kg body weight); adjust to your own needs in Settings"
+  }
+}

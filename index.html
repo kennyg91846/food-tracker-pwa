@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Heart & Table — Nutrition Tracker</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#8B2E2E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <h1>Heart&nbsp;&amp;&nbsp;Table</h1>
+  <div class="topbar-actions">
+    <input type="date" id="date-picker">
+    <button id="settings-btn" class="icon-btn" title="Settings">⚙</button>
+  </div>
+</header>
+
+<main>
+  <section class="targets-panel" aria-label="Today's targets">
+    <h2>Today, against your targets</h2>
+    <div id="targets-list" class="targets-list"><!-- rendered by app.js --></div>
+    <p class="disclaimer">
+      Targets come from public AHA / DASH guidance — this is an educational
+      reference, not medical advice. Talk to your doctor about what's right for you.
+    </p>
+  </section>
+
+  <section class="today-log" aria-label="Today's log">
+    <h2>Today's log</h2>
+    <ul id="log-list" class="log-list"></ul>
+    <p id="log-empty" class="empty-state">Nothing logged yet today. Search above to add your first food.</p>
+  </section>
+
+  <section class="log-panel" aria-label="Log a food">
+    <h2>Log a food</h2>
+    <div class="weekly-repeats" aria-label="Most eaten in the last week">
+      <button type="button" id="weekly-repeats-toggle" class="weekly-toggle" aria-expanded="false" aria-controls="weekly-repeats-content">
+        <span>Most eaten in the last week</span>
+        <span class="weekly-toggle-icon" aria-hidden="true">+</span>
+      </button>
+      <div id="weekly-repeats-content" hidden>
+        <ul id="weekly-repeats-list" class="weekly-repeats-list"></ul>
+        <p id="weekly-repeats-empty" class="empty-state">No repeat foods in the last 7 days.</p>
+      </div>
+    </div>
+    <form id="search-form" autocomplete="off">
+      <input type="text" id="search-input" placeholder="Search e.g. “chicken breast”, “string cheese”…" required>
+      <button type="submit">Search</button>
+    </form>
+    <ul id="search-results" class="search-results"></ul>
+  </section>
+</main>
+
+<!-- Serving-size dialog shown when adding a search result -->
+<dialog id="serving-dialog">
+  <form method="dialog" id="serving-form">
+    <h3 id="serving-food-name"></h3>
+    <label for="serving-amount">Amount</label>
+    <input type="number" id="serving-amount" value="3.5" min="0.1" step="0.1" required>
+
+    <label for="serving-unit">Unit</label>
+    <select id="serving-unit">
+      <option value="oz" selected>ounces (oz)</option>
+      <option value="cup">cups</option>
+      <option value="tbsp">tablespoons (tbsp)</option>
+      <option value="tsp">teaspoons (tsp)</option>
+      <option value="floz">fluid ounces (fl oz)</option>
+      <option value="g">grams (g)</option>
+      <option value="kg">kilograms (kg)</option>
+      <option value="ml">milliliters (ml)</option>
+      <option value="l">liters (L)</option>
+      <option value="lb">pounds (lb)</option>
+    </select>
+    <p class="serving-note">Volume units are converted approximately for food logging.</p>
+    <div class="dialog-actions">
+      <button type="button" id="serving-cancel">Cancel</button>
+      <button type="submit" id="serving-add">Add to log</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Settings dialog -->
+<dialog id="settings-dialog">
+  <form method="dialog" id="settings-form">
+    <h3>Settings</h3>
+    <label for="usda-key">USDA FoodData Central API key</label>
+    <input type="text" id="usda-key" placeholder="Get a free key at fdc.nal.usda.gov/api-key-signup">
+
+    <label class="toggle-row" for="use-personalized-targets">
+      <input type="checkbox" id="use-personalized-targets">
+      Use personalized targets
+    </label>
+
+    <div id="profile-fields" class="profile-fields">
+      <div class="settings-grid">
+        <div>
+          <label for="profile-age">Age</label>
+          <input type="number" id="profile-age" min="14" max="120" value="35">
+        </div>
+        <div>
+          <label for="profile-sex">Sex</label>
+          <select id="profile-sex">
+            <option value="female">Female</option>
+            <option value="male">Male</option>
+          </select>
+        </div>
+        <div>
+          <label for="profile-height-ft">Height (ft)</label>
+          <input type="number" id="profile-height-ft" min="3" max="8" value="5">
+        </div>
+        <div>
+          <label for="profile-height-in">Height (in)</label>
+          <input type="number" id="profile-height-in" min="0" max="11" value="7">
+        </div>
+        <div>
+          <label for="profile-weight-lb">Weight (lb)</label>
+          <input type="number" id="profile-weight-lb" min="66" max="660" step="0.1" value="154">
+        </div>
+      </div>
+
+      <label for="profile-activity">Activity level</label>
+      <select id="profile-activity">
+        <option value="sedentary">Sedentary</option>
+        <option value="light" selected>Lightly active</option>
+        <option value="moderate">Moderately active</option>
+        <option value="active">Active</option>
+        <option value="very-active">Very active</option>
+      </select>
+
+      <label for="calorie-goal-override">Calorie goal override (optional)</label>
+      <input type="number" id="calorie-goal-override" min="800" max="5000" step="10" placeholder="Example: 1500">
+
+      <p class="formula-note">
+        Personalized mode formulas: Calories = Mifflin-St Jeor BMR x activity factor.
+        Protein = 0.8g/kg (1.0g/kg if age 65+). Fiber = 14g per 1000 kcal.
+        You can set a lower calorie goal override while keeping the same profile.
+        Profile inputs use US units by default (ft/in and lb).
+      </p>
+    </div>
+
+    <label for="sodium-target">Sodium daily limit (mg)</label>
+    <input type="number" id="sodium-target" value="2300">
+    <div class="dialog-actions">
+      <button type="button" id="settings-cancel">Cancel</button>
+      <button type="submit">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
