@@ -1,5 +1,5 @@
 import { db, cacheFood, getCachedFood, addLogEntry, removeLogEntry, getLogForDate, sumNutrients, getSetting, setSetting, searchCachedFoodsByName, getLastLogEntryForFood } from './db.js';
-import { searchFoodsDetailed, scaleNutrients } from './api.js';
+import { searchFoodsDetailed, scaleNutrients, lookupBarcode } from './api.js';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -9,6 +9,9 @@ let lastSearchResults = [];
 let pendingFood = null;
 let userSettings = null;
 let weeklyRepeatsExpanded = false;
+let activeScanner = null;
+let scannerRunning = false;
+let scannerDecoding = false;
 
 const OZ_TO_GRAMS = 28.349523125;
 const LB_TO_KG = 0.45359237;
@@ -47,7 +50,31 @@ const ACTIVITY_FACTORS = {
   'very-active': 1.9
 };
 
+const SOURCE_LABEL_FULL_SHOW_LIMIT = 15;
+const SOURCE_LABEL_SEEN_KEY = 'sourceLabelSeenCounts';
+
 const el = (id) => document.getElementById(id);
+
+function loadSourceLabelSeenCounts() {
+  try {
+    const raw = localStorage.getItem(SOURCE_LABEL_SEEN_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+const sourceLabelSeenCounts = loadSourceLabelSeenCounts();
+
+function incrementSourceLabelSeen(source) {
+  sourceLabelSeenCounts[source] = (Number(sourceLabelSeenCounts[source]) || 0) + 1;
+  try {
+    localStorage.setItem(SOURCE_LABEL_SEEN_KEY, JSON.stringify(sourceLabelSeenCounts));
+  } catch {
+    // Ignore storage failures; labels still render correctly.
+  }
+}
 
 function suggestSimplerSearch(query) {
   const tokens = String(query || '').trim().split(/\s+/).filter(Boolean);
@@ -91,8 +118,202 @@ function foodDescriptor(food) {
   return parts.join(' • ');
 }
 
+function formatSourceLabel(source) {
+  const normalized = String(source || '').toLowerCase();
+
+  if (normalized === 'off') {
+    const seen = Number(sourceLabelSeenCounts.off) || 0;
+    const label = seen < SOURCE_LABEL_FULL_SHOW_LIMIT ? 'Open Food Facts' : 'OFF';
+    incrementSourceLabelSeen('off');
+    return label;
+  }
+
+  const map = {
+    usda: 'USDA',
+    local: 'Local history',
+    manual: 'Manual'
+  };
+  return map[normalized] || source || 'Unknown';
+}
+
+function normalizeBarcodeInput(raw) {
+  return String(raw || '').replace(/\D/g, '');
+}
+
+function isPlausibleBarcode(code) {
+  return code.length >= 8 && code.length <= 14;
+}
+
+function describeScannerError(err) {
+  const raw = String(err?.message || err || '').trim();
+  const combined = `${String(err?.name || '')} ${raw}`.toLowerCase();
+
+  if (combined.includes('notallowederror') || combined.includes('permission')) {
+    return 'Camera permission was blocked. Allow camera access in your browser settings and try again.';
+  }
+  if (combined.includes('notfounderror') || combined.includes('no camera')) {
+    return 'No camera was found on this device.';
+  }
+  if (combined.includes('notreadableerror') || combined.includes('in use')) {
+    return 'Camera is busy in another app/tab. Close it there and try again.';
+  }
+  if (combined.includes('secure') || combined.includes('https')) {
+    return 'Camera scanning requires HTTPS on phones. Open the app over HTTPS, or use manual UPC lookup.';
+  }
+  return raw || 'Unable to start camera scanner.';
+}
+
+function setScannerButtonState() {
+  const btn = el('scan-toggle-btn');
+  if (!btn) return;
+  btn.textContent = scannerRunning ? 'Stop camera scan' : 'Start camera scan';
+}
+
+async function stopBarcodeScanner() {
+  const scannerRegion = el('scanner-region');
+  if (scannerRegion) scannerRegion.hidden = true;
+
+  if (!activeScanner || !scannerRunning) {
+    scannerRunning = false;
+    scannerDecoding = false;
+    setScannerButtonState();
+    return;
+  }
+
+  try {
+    await activeScanner.stop();
+  } catch {
+    // Ignore stop errors if camera stream is already gone.
+  }
+
+  try {
+    activeScanner.clear();
+  } catch {
+    // Clear can fail if internals were already torn down.
+  }
+
+  scannerRunning = false;
+  scannerDecoding = false;
+  setScannerButtonState();
+}
+
+async function startBarcodeScanner() {
+  const status = el('barcode-status');
+  const scannerRegion = el('scanner-region');
+  const isSecureForCamera = window.isSecureContext || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+
+  if (!isSecureForCamera) {
+    status.textContent = 'Camera scanning requires HTTPS on phones. Open the app over HTTPS, or use manual UPC lookup.';
+    return;
+  }
+
+  if (!window.Html5Qrcode) {
+    status.textContent = 'Scanner library did not load. Refresh and try again.';
+    return;
+  }
+
+  if (scannerRunning) return;
+  scannerRegion.hidden = false;
+  status.textContent = 'Starting camera...';
+
+  if (!activeScanner) {
+    activeScanner = new window.Html5Qrcode('scanner-reader');
+  }
+
+  const formats = window.Html5QrcodeSupportedFormats || {};
+  const config = {
+    fps: 10,
+    qrbox: { width: 260, height: 120 },
+    rememberLastUsedCamera: true,
+    formatsToSupport: [
+      formats.UPC_A,
+      formats.UPC_E,
+      formats.EAN_8,
+      formats.EAN_13
+    ].filter(Boolean)
+  };
+
+  const onScanSuccess = async (decodedText) => {
+    if (scannerDecoding) return;
+
+    const code = normalizeBarcodeInput(decodedText);
+    if (!isPlausibleBarcode(code)) {
+      status.textContent = `Scanned "${decodedText}" but it is not a valid UPC/EAN.`;
+      return;
+    }
+
+    scannerDecoding = true;
+    status.textContent = `Scanned ${code}. Looking up...`;
+    el('barcode-input').value = code;
+    await stopBarcodeScanner();
+    await handleBarcodeLookup(code);
+    scannerDecoding = false;
+  };
+
+  try {
+    await activeScanner.start(
+      { facingMode: { exact: 'environment' } },
+      config,
+      onScanSuccess,
+      () => {}
+    );
+    scannerRunning = true;
+    setScannerButtonState();
+    status.textContent = 'Point the camera at a barcode.';
+  } catch {
+    try {
+      await activeScanner.start(
+        { facingMode: 'environment' },
+        config,
+        onScanSuccess,
+        () => {}
+      );
+      scannerRunning = true;
+      setScannerButtonState();
+      status.textContent = 'Point the camera at a barcode.';
+    } catch (err) {
+      scannerRunning = false;
+      scannerDecoding = false;
+      scannerRegion.hidden = true;
+      setScannerButtonState();
+      status.textContent = describeScannerError(err);
+    }
+  }
+}
+
+async function handleBarcodeLookup(rawCode) {
+  const status = el('barcode-status');
+  const code = normalizeBarcodeInput(rawCode);
+
+  if (!isPlausibleBarcode(code)) {
+    status.textContent = 'Enter a valid UPC/EAN (8-14 digits).';
+    return;
+  }
+
+  status.textContent = 'Looking up barcode...';
+  try {
+    const food = await lookupBarcode(code);
+    if (!food) {
+      status.textContent = `No product found for code ${code}.`;
+      return;
+    }
+
+    await cacheFood(food);
+    lastSearchResults = dedupeFoodsById([food, ...lastSearchResults]);
+
+    const descriptor = foodDescriptor(food);
+    status.textContent = descriptor
+      ? `Found: ${food.name} (${descriptor}). Set serving and add to today's log.`
+      : `Found: ${food.name}. Set serving and add to today's log.`;
+
+    openServingDialogForFood(food, { amount: 100, unit: 'g' });
+  } catch (err) {
+    status.textContent = err?.message || 'Barcode lookup failed. Please try again.';
+  }
+}
+
 async function addFoodWithServing(food, servingAmount, servingUnit) {
-  const grams = convertServingToGrams(servingAmount, servingUnit);
+  const grams = convertServingToGrams(food, servingAmount, servingUnit);
   await cacheFood(food);
   const nutrients = scaleNutrients(food.nutrientsPer100g, grams);
   await addLogEntry({
@@ -163,8 +384,64 @@ function formatServingDisplay(amount, unit, grams) {
   return `${(Number(grams || 0) / OZ_TO_GRAMS).toFixed(1)}oz`;
 }
 
-function convertServingToGrams(amount, unit) {
+function parseLeadingQuantity(text) {
+  const s = String(text || '').trim();
+  if (!s) return null;
+
+  const frac = s.match(/^(\d+)\s*\/\s*(\d+)/);
+  if (frac) {
+    const numerator = Number(frac[1]);
+    const denominator = Number(frac[2]);
+    if (denominator) return numerator / denominator;
+  }
+
+  const wholeAndFrac = s.match(/^(\d+)\s+(\d+)\s*\/\s*(\d+)/);
+  if (wholeAndFrac) {
+    const whole = Number(wholeAndFrac[1]);
+    const numerator = Number(wholeAndFrac[2]);
+    const denominator = Number(wholeAndFrac[3]);
+    if (denominator) return whole + (numerator / denominator);
+  }
+
+  const decimal = s.match(/^(\d+(?:\.\d+)?)/);
+  if (decimal) return Number(decimal[1]);
+  return null;
+}
+
+function inferServingGrams(food) {
+  const direct = Number(food?.servingGrams || 0);
+  if (direct > 0) return direct;
+
+  const detail = String(food?.detail || '');
+  const fromDetail = detail.match(/(\d+(?:\.\d+)?)\s*(?:g|grm|gram|grams|gm)\s+serving/i);
+  if (fromDetail) return Number(fromDetail[1]);
+  return 0;
+}
+
+function convertServingToGrams(food, amount, unit) {
   const numericAmount = Number(amount) || 0;
+  if (numericAmount <= 0) return 0;
+
+  const servingGrams = inferServingGrams(food);
+  const householdText = String(food?.householdServingText || '').toLowerCase();
+  const unitPattern = {
+    cup: /\bcups?\b/,
+    tbsp: /\b(tablespoons?|tbsp)\b/,
+    tsp: /\b(teaspoons?|tsp)\b/,
+    floz: /\b(fl\.?\s?oz|fluid\s+ounces?)\b/
+  };
+
+  // If USDA gives a serving gram weight, prefer that for household units.
+  if (servingGrams > 0 && unitPattern[unit]) {
+    if (unitPattern[unit].test(householdText)) {
+      const qty = parseLeadingQuantity(householdText) || 1;
+      return numericAmount * (servingGrams / qty);
+    }
+    if (unit === 'cup') {
+      return numericAmount * servingGrams;
+    }
+  }
+
   const ratio = UNIT_TO_GRAMS[unit] || OZ_TO_GRAMS;
   return numericAmount * ratio;
 }
@@ -189,7 +466,7 @@ function computeGramTargets() {
   }
 
   return {
-    calories: { target: calTarget, direction: 'max-soft', unit: 'kcal' },
+    calories: { target: calTarget, direction: 'max-soft', unit: 'calories' },
     sodium: { target: sodiumTarget, direction: 'max', unit: 'mg' },
     saturatedFat: {
       target: Math.round((targets.saturatedFat.percentOfCalories / 100 * calTarget) / 9),
@@ -232,7 +509,7 @@ async function renderTargets() {
     const pct = t.target ? (consumed / t.target) * 100 : 0;
     const fillPct = Math.max(0, Math.min(pct, 100));
     const cls = barColor(pct, t.direction);
-    const displayUnit = t.unit === 'mg' ? 'mg' : t.unit === 'kcal' ? ' kcal' : 'g';
+    const displayUnit = t.unit === 'mg' ? 'mg' : t.unit === 'calories' ? ' Calories' : 'g';
     const row = document.createElement('div');
     row.className = 'target-row';
     row.innerHTML = `
@@ -256,11 +533,12 @@ async function renderLog() {
   for (const entry of entries) {
     const li = document.createElement('li');
     const servingDisplay = formatServingDisplay(entry.servingAmount, entry.servingUnit, entry.grams);
+    const sourceLabel = formatSourceLabel(entry.source);
     li.innerHTML = `
       <div>
         <span class="food-name">${entry.foodName}</span>
-        <span class="food-source">${entry.source}</span><br>
-        <span class="food-macros">${servingDisplay} · ${Math.round(entry.nutrients.calories || 0)} kcal</span>
+        <span class="food-source">${sourceLabel}</span><br>
+        <span class="food-macros">${servingDisplay} · ${Math.round(entry.nutrients.calories || 0)} Calories</span>
       </div>
       <button class="remove-btn" data-id="${entry.id}">Remove</button>
     `;
@@ -417,17 +695,21 @@ async function handleSearch(query) {
 
     const li = document.createElement('li');
     const sourceTag = isLocal ? 'local' : food.source;
+    const sourceLabel = formatSourceLabel(sourceTag);
     const lastServingText = lastEntry
       ? `last: ${formatServingDisplay(lastEntry.servingAmount, lastEntry.servingUnit, lastEntry.grams)}`
-      : 'per 3.5oz';
-      const descriptor = foodDescriptor(food);
+      : 'per 100g';
+    const previewCalories = lastEntry
+      ? Math.round(scaleNutrients(food.nutrientsPer100g, Number(lastEntry.grams) || 0).calories || 0)
+      : Math.round(food.nutrientsPer100g.calories || 0);
+    const descriptor = foodDescriptor(food);
 
     li.innerHTML = `
       <div>
         <span class="food-name">${food.name}</span>
-        <span class="food-source">${sourceTag}</span><br>
+        <span class="food-source">${sourceLabel}</span><br>
           ${descriptor ? `<span class="food-detail">${descriptor}</span><br>` : ''}
-        <span class="food-macros">${lastServingText}: ${Math.round(food.nutrientsPer100g.calories || 0)} kcal</span>
+        <span class="food-macros">${lastServingText}: ${previewCalories} Calories</span>
       </div>
       <div class="result-actions">
         ${lastEntry ? `<button class="quick-add-btn" data-id="${food.id}" data-amount="${Number(lastEntry.servingAmount || 0)}" data-unit="${lastEntry.servingUnit || 'oz'}">Add last</button>` : ''}
@@ -481,6 +763,28 @@ async function init() {
     e.preventDefault();
     const q = el('search-input').value.trim();
     if (q) handleSearch(q);
+  });
+
+  el('barcode-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const code = el('barcode-input').value;
+    handleBarcodeLookup(code);
+  });
+
+  el('barcode-input').addEventListener('input', () => {
+    const status = el('barcode-status');
+    if (status.textContent) status.textContent = '';
+  });
+
+  setScannerButtonState();
+  el('scan-toggle-btn').addEventListener('click', async () => {
+    if (scannerRunning) {
+      await stopBarcodeScanner();
+      const status = el('barcode-status');
+      status.textContent = 'Camera scan stopped.';
+      return;
+    }
+    await startBarcodeScanner();
   });
 
   const searchInput = el('search-input');
@@ -567,6 +871,12 @@ async function init() {
       /* offline shell just won't be available — not fatal */
     });
   }
+
+  window.addEventListener('beforeunload', () => {
+    if (scannerRunning) {
+      stopBarcodeScanner();
+    }
+  });
 }
 
 init();

@@ -46,12 +46,19 @@ function normalizeUsdaFood(food) {
     detailParts.push(`${food.servingSize}${food.servingSizeUnit} serving`);
   }
 
+  const servingSize = Number(food.servingSize || 0);
+  const servingSizeUnit = String(food.servingSizeUnit || '').toLowerCase().trim();
+  const gramUnits = new Set(['g', 'grm', 'gram', 'grams', 'gm']);
+  const servingGrams = (servingSize > 0 && gramUnits.has(servingSizeUnit)) ? servingSize : 0;
+
   return {
     id: `usda:${food.fdcId}`,
     source: 'usda',
     name: food.description,
     brand,
     detail: detailParts.join(' • '),
+    householdServingText: food.householdServingFullText || '',
+    servingGrams,
     nutrientsPer100g
   };
 }

@@ -38,6 +38,19 @@
 
   <section class="log-panel" aria-label="Log a food">
     <h2>Log a food</h2>
+    <form id="barcode-form" class="barcode-form" autocomplete="off">
+      <input type="text" id="barcode-input" inputmode="numeric" pattern="[0-9]*" placeholder="Enter UPC or EAN code" required>
+      <button type="submit">Lookup UPC</button>
+    </form>
+    <div class="scan-actions">
+      <button type="button" id="scan-toggle-btn" class="scan-toggle-btn">Start camera scan</button>
+    </div>
+    <p class="scan-help">Tip: camera scan works best on HTTPS (for example GitHub Pages).</p>
+    <div id="scanner-region" class="scanner-region" hidden>
+      <div id="scanner-reader" class="scanner-reader" aria-label="Barcode camera scanner"></div>
+    </div>
+    <p id="barcode-status" class="barcode-status" aria-live="polite"></p>
+
     <div class="weekly-repeats" aria-label="Most eaten in the last week">
       <button type="button" id="weekly-repeats-toggle" class="weekly-toggle" aria-expanded="false" aria-controls="weekly-repeats-content">
         <span>Most eaten in the last week</span>
@@ -137,7 +150,7 @@
 
       <p class="formula-note">
         Personalized mode formulas: Calories = Mifflin-St Jeor BMR x activity factor.
-        Protein = 0.8g/kg (1.0g/kg if age 65+). Fiber = 14g per 1000 kcal.
+        Protein = 0.8g/kg (1.0g/kg if age 65+). Fiber = 14g per 1000 calories.
         You can set a lower calorie goal override while keeping the same profile.
         Profile inputs use US units by default (ft/in and lb).
       </p>
@@ -152,6 +165,7 @@
   </form>
 </dialog>
 
-<script type="module" src="app.js"></script>
+<script src="./vendor/html5-qrcode.min.js"></script>
+<script type="module" src="app.js?v=36"></script>
 </body>
 </html>

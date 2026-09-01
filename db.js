@@ -2,7 +2,7 @@
 // Everything here lives on-device. Nothing is sent anywhere except the
 // food-search API calls themselves (USDA / Open Food Facts).
 
-import Dexie from './node_modules/dexie/dist/dexie.mjs';
+import Dexie from './vendor/dexie.mjs';
 
 export const db = new Dexie('heartNutritionPWA');
 

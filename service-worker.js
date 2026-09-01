@@ -1,11 +1,12 @@
-const CACHE_NAME = 'heart-table-shell-v26';
+const CACHE_NAME = 'heart-table-shell-v38';
 const SHELL_FILES = [
   './',
   './index.html',
   './style.css',
   './app.js',
   './db.js',
-  './node_modules/dexie/dist/dexie.mjs',
+  './vendor/dexie.mjs',
+  './vendor/html5-qrcode.min.js',
   './api.js',
   './targets.json',
   './manifest.json'
@@ -51,3 +52,4 @@ self.addEventListener('fetch', (event) => {
     caches.match(event.request).then((cached) => cached || fetch(event.request))
   );
 });
+
