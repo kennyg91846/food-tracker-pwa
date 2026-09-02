@@ -1,5 +1,5 @@
 import { db, cacheFood, getCachedFood, addLogEntry, removeLogEntry, getLogForDate, sumNutrients, getSetting, setSetting, searchCachedFoodsByName, getLastLogEntryForFood } from './db.js';
-import { searchFoodsDetailed, scaleNutrients, lookupBarcode } from './api.js';
+import { searchFoodsDetailed, scaleNutrients, lookupBarcode } from './api.js?v=2';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -39,7 +39,9 @@ const UNIT_LABEL = {
   tsp: 'tsp',
   ml: 'ml',
   l: 'L',
-  floz: 'fl oz'
+  floz: 'fl oz',
+  serving: 'serving',
+  slice: 'slice'
 };
 
 const ACTIVITY_FACTORS = {
@@ -306,7 +308,7 @@ async function handleBarcodeLookup(rawCode) {
       ? `Found: ${food.name} (${descriptor}). Set serving and add to today's log.`
       : `Found: ${food.name}. Set serving and add to today's log.`;
 
-    openServingDialogForFood(food, { amount: 100, unit: 'g' });
+    openServingDialogForFood(food, inferDefaultServing(food, { amount: 100, unit: 'g' }));
   } catch (err) {
     status.textContent = err?.message || 'Barcode lookup failed. Please try again.';
   }
@@ -418,18 +420,49 @@ function inferServingGrams(food) {
   return 0;
 }
 
+function inferDefaultServing(food, fallback = { amount: 3.5, unit: 'oz' }) {
+  const servingGrams = inferServingGrams(food);
+  if (servingGrams <= 0) return fallback;
+
+  const householdText = String(food?.householdServingText || '').toLowerCase();
+  const servingUnit = String(food?.servingUnit || '').toLowerCase();
+  const servingQuantity = Number(food?.servingQuantity || 0);
+  const looksLikeSlice = /\bslices?\b|\binch\s+slice\b/.test(householdText) || /\bslices?\b|\binch\s+slice\b/.test(servingUnit);
+
+  if (looksLikeSlice) {
+    const qty = parseLeadingQuantity(householdText) || (servingQuantity > 0 ? servingQuantity : 1);
+    return { amount: qty, unit: 'slice' };
+  }
+
+  return { amount: 1, unit: 'serving' };
+}
+
 function convertServingToGrams(food, amount, unit) {
   const numericAmount = Number(amount) || 0;
   if (numericAmount <= 0) return 0;
 
   const servingGrams = inferServingGrams(food);
   const householdText = String(food?.householdServingText || '').toLowerCase();
+  const servingUnit = String(food?.servingUnit || '').toLowerCase();
+  const servingQuantity = Number(food?.servingQuantity || 0);
   const unitPattern = {
     cup: /\bcups?\b/,
     tbsp: /\b(tablespoons?|tbsp)\b/,
     tsp: /\b(teaspoons?|tsp)\b/,
-    floz: /\b(fl\.?\s?oz|fluid\s+ounces?)\b/
+    floz: /\b(fl\.?\s?oz|fluid\s+ounces?)\b/,
+    slice: /\bslices?\b|\binch\s+slice\b/
   };
+
+  if (servingGrams > 0 && unit === 'serving') {
+    return numericAmount * servingGrams;
+  }
+
+  if (servingGrams > 0 && unit === 'slice') {
+    if (unitPattern.slice.test(householdText) || unitPattern.slice.test(servingUnit)) {
+      const qty = parseLeadingQuantity(householdText) || (servingQuantity > 0 ? servingQuantity : 1);
+      return numericAmount * (servingGrams / qty);
+    }
+  }
 
   // If USDA gives a serving gram weight, prefer that for household units.
   if (servingGrams > 0 && unitPattern[unit]) {
@@ -736,7 +769,7 @@ async function handleSearch(query) {
 
 function openServingDialog(foodId) {
   const food = lastSearchResults.find((f) => f.id === foodId);
-  openServingDialogForFood(food, { amount: 3.5, unit: 'oz' });
+  openServingDialogForFood(food, inferDefaultServing(food, { amount: 3.5, unit: 'oz' }));
 }
 
 async function confirmAddServing() {

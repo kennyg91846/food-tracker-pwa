@@ -12,6 +12,49 @@ const OFF_USER_AGENT_APP = 'HeartNutritionPWA - Personal use';
 const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 const searchCache = new Map();
 
+const KNOWN_OFF_OVERRIDES = {
+  // Wegmans Organic White Sourdough (UPC 077890559031) package label values.
+  '077890559031': {
+    name: 'Organic White Sourdough',
+    servingText: '1 inch slice',
+    servingQuantity: 1,
+    servingUnit: 'slice',
+    servingGrams: (20 * 28.349523125) / 10, // 20 oz loaf, 10 servings
+    perServing: {
+      calories: 130,
+      fat: 0,
+      saturatedFat: 0,
+      carbs: 27,
+      fiber: 2,
+      sugars: 1,
+      addedSugar: 0,
+      protein: 5,
+      sodium: 290,
+      potassium: 63
+    }
+  },
+  // Same UPC as above, but some sources drop the leading zero.
+  '77890559031': {
+    name: 'Organic White Sourdough',
+    servingText: '1 inch slice',
+    servingQuantity: 1,
+    servingUnit: 'slice',
+    servingGrams: (20 * 28.349523125) / 10,
+    perServing: {
+      calories: 130,
+      fat: 0,
+      saturatedFat: 0,
+      carbs: 27,
+      fiber: 2,
+      sugars: 1,
+      addedSugar: 0,
+      protein: 5,
+      sodium: 290,
+      potassium: 63
+    }
+  }
+};
+
 // USDA nutrient IDs we care about (see FDC docs for the full list).
 const USDA_NUTRIENT_IDS = {
   1008: 'calories',      // Energy (kcal)
@@ -58,6 +101,8 @@ function normalizeUsdaFood(food) {
     brand,
     detail: detailParts.join(' • '),
     householdServingText: food.householdServingFullText || '',
+    servingQuantity: 1,
+    servingUnit: 'serving',
     servingGrams,
     nutrientsPer100g
   };
@@ -77,6 +122,7 @@ export async function searchUsda(query, pageSize = 10) {
 }
 
 function normalizeOffProduct(product) {
+  const servingInfo = parseOffServingInfo(product);
   const n = product.nutriments || {};
   const brand = (product.brands || '').split(',')[0].trim();
   const detailParts = [];
@@ -84,12 +130,16 @@ function normalizeOffProduct(product) {
   if (product.categories) detailParts.push(product.categories.split(',')[0].trim());
   if (product.code) detailParts.push(`code ${String(product.code).slice(-4)}`);
 
-  return {
+  const normalized = {
     id: `off:${product.code}`,
     source: 'off',
     name: product.product_name || product.generic_name || 'Unknown product',
     brand,
     detail: detailParts.join(' • '),
+    householdServingText: servingInfo.householdServingText,
+    servingQuantity: servingInfo.servingQuantity,
+    servingUnit: servingInfo.servingUnit,
+    servingGrams: servingInfo.servingGrams,
     nutrientsPer100g: {
       calories: n['energy-kcal_100g'] ?? 0,
       protein: n['proteins_100g'] ?? 0,
@@ -101,6 +151,87 @@ function normalizeOffProduct(product) {
       addedSugar: n['sugars_100g'] ?? 0, // OFF rarely distinguishes added vs total sugar
       potassium: (n['potassium_100g'] ?? 0) * 1000
     }
+  };
+
+  return applyKnownOffOverride(normalized, product);
+}
+
+function perServingToPer100(value, servingGrams) {
+  const numeric = Number(value) || 0;
+  const grams = Number(servingGrams) || 0;
+  if (grams <= 0) return 0;
+  return (numeric * 100) / grams;
+}
+
+function normalizeCode(code) {
+  return String(code || '').replace(/\D/g, '');
+}
+
+function findKnownOverride(code) {
+  const raw = normalizeCode(code);
+  if (!raw) return null;
+
+  const variants = [
+    raw,
+    raw.replace(/^0+/, ''),
+    raw.length > 12 ? raw.slice(-12) : raw,
+    raw.length > 11 ? raw.slice(-11) : raw,
+    raw.padStart(12, '0'),
+    raw.padStart(13, '0')
+  ];
+
+  for (const variant of variants) {
+    if (KNOWN_OFF_OVERRIDES[variant]) return KNOWN_OFF_OVERRIDES[variant];
+  }
+  return null;
+}
+
+function applyKnownOffOverride(normalizedFood, rawProduct) {
+  const code = normalizeCode(rawProduct?.code || normalizedFood?.id?.split(':')[1] || '');
+  const override = findKnownOverride(code);
+  if (!override) return normalizedFood;
+
+  const g = override.servingGrams;
+  return {
+    ...normalizedFood,
+    name: override.name || normalizedFood.name,
+    householdServingText: override.servingText,
+    servingQuantity: override.servingQuantity,
+    servingUnit: override.servingUnit,
+    servingGrams: g,
+    nutrientsPer100g: {
+      calories: perServingToPer100(override.perServing.calories, g),
+      protein: perServingToPer100(override.perServing.protein, g),
+      carbs: perServingToPer100(override.perServing.carbs, g),
+      fat: perServingToPer100(override.perServing.fat, g),
+      saturatedFat: perServingToPer100(override.perServing.saturatedFat, g),
+      fiber: perServingToPer100(override.perServing.fiber, g),
+      sodium: perServingToPer100(override.perServing.sodium, g),
+      addedSugar: perServingToPer100(override.perServing.addedSugar, g),
+      potassium: perServingToPer100(override.perServing.potassium, g)
+    }
+  };
+}
+
+function parseOffServingInfo(product) {
+  const servingSizeText = String(product?.serving_size || '').trim();
+  const quantity = Number(product?.serving_quantity || 0);
+  const unitRaw = String(product?.serving_quantity_unit || '').trim();
+  const unit = unitRaw.toLowerCase();
+
+  let servingGrams = 0;
+  const gramsInServingSize = servingSizeText.match(/(\d+(?:\.\d+)?)\s*g\b/i);
+  if (gramsInServingSize) {
+    servingGrams = Number(gramsInServingSize[1]);
+  } else if (quantity > 0 && ['g', 'gram', 'grams', 'gm'].includes(unit)) {
+    servingGrams = quantity;
+  }
+
+  return {
+    householdServingText: servingSizeText,
+    servingQuantity: quantity > 0 ? quantity : 1,
+    servingUnit: unit || 'serving',
+    servingGrams
   };
 }
 

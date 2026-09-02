@@ -1,4 +1,4 @@
-const CACHE_NAME = 'heart-table-shell-v38';
+const CACHE_NAME = 'heart-table-shell-v43';
 const SHELL_FILES = [
   './',
   './index.html',
